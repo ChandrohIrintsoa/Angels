@@ -1,0 +1,177 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  build.yml  —  Angels Memory Engine v3
+#  Compile libangels.so pour 3 ABI Android via NDK + CMake
+#
+#  Déclencheurs :
+#    • push / PR sur main
+#    • déclenchement manuel (workflow_dispatch)
+#
+#  Artifacts produits :
+#    • libangels-all-abis.zip  →  arm64-v8a / armeabi-v7a / x86_64
+#    • libangels-<abi>         →  artifact individuel par ABI
+#
+#  Durée estimée : ~3 min (cache chaud) / ~8 min (premier run)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Build libangels.so
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:            # ← déclenchement manuel depuis l'onglet Actions
+
+env:
+  NDK_VERSION:   "26.3.11579264"   # NDK r26d — LTS stable
+  CMAKE_VERSION: "3.22.1"
+  API_LEVEL:     "28"
+  BUILD_TYPE:    "Release"
+
+jobs:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  #  Job 1 : compilation parallèle par ABI
+  # ───────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build [${{ matrix.abi }}]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false           # un ABI raté n'annule pas les autres
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Cache NDK — évite 400 MB de téléchargement à chaque run
+      - name: Cache NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/ndk/${{ env.NDK_VERSION }}
+          key: ndk-${{ env.NDK_VERSION }}-linux
+
+      - name: Install NDK & CMake
+        run: |
+          # Accepter les licences sans interaction
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+            --licenses > /dev/null 2>&1 || true
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;${{ env.NDK_VERSION }}" \
+            "cmake;${{ env.CMAKE_VERSION }}"
+
+      # Résoudre le chemin NDK de façon fiable (ANDROID_HOME peut être vide)
+      - name: Resolve NDK path
+        id: ndk
+        run: |
+          NDK_PATH="$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}"
+          if [ ! -d "$NDK_PATH" ]; then
+            NDK_PATH=$(find /usr/local/lib/android/sdk/ndk \
+                            /opt/android-sdk/ndk \
+                            "$HOME/.android/sdk/ndk" \
+                       -maxdepth 1 -name "${{ env.NDK_VERSION }}" 2>/dev/null | head -1)
+          fi
+          echo "NDK_PATH=$NDK_PATH" >> "$GITHUB_OUTPUT"
+          ls "$NDK_PATH/build/cmake/" || (echo "❌ NDK introuvable !" && exit 1)
+
+      # Cache du dossier build (recompile seulement les fichiers modifiés)
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: build-${{ matrix.abi }}
+          key: cmake-${{ matrix.abi }}-${{ hashFiles('CMakeLists.txt','src/**','include/**') }}
+          restore-keys: cmake-${{ matrix.abi }}-
+
+      - name: Configure CMake
+        run: |
+          cmake \
+            -S . \
+            -B build-${{ matrix.abi }} \
+            -DCMAKE_TOOLCHAIN_FILE="${{ steps.ndk.outputs.NDK_PATH }}/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI="${{ matrix.abi }}" \
+            -DANDROID_PLATFORM="android-${{ env.API_LEVEL }}" \
+            -DCMAKE_BUILD_TYPE="${{ env.BUILD_TYPE }}" \
+            -DANDROID_STL="c++_static"
+
+      - name: Build libangels.so
+        run: |
+          cmake --build build-${{ matrix.abi }} \
+            --target angels \
+            --parallel \
+            --config ${{ env.BUILD_TYPE }}
+
+      # Vérifier et afficher les infos du .so produit
+      - name: Verify output
+        run: |
+          SO="build-${{ matrix.abi }}/libangels.so"
+          if [ ! -f "$SO" ]; then
+            echo "❌ libangels.so introuvable !"
+            find build-${{ matrix.abi }} -name "*.so" 2>/dev/null
+            exit 1
+          fi
+          echo "✔ $SO  —  $(du -sh "$SO" | cut -f1)"
+          echo "Type : $(file "$SO")"
+          echo "--- Symboles JNI exportés ---"
+          nm -D "$SO" 2>/dev/null | grep " T Java_" | awk '{print "  "$3}' | sort || true
+
+      - name: Upload artifact [${{ matrix.abi }}]
+        uses: actions/upload-artifact@v4
+        with:
+          name: libangels-${{ matrix.abi }}
+          path: build-${{ matrix.abi }}/libangels.so
+          if-no-files-found: error
+          retention-days: 30
+
+  # ───────────────────────────────────────────────────────────────────────────
+  #  Job 2 : assembler les 3 ABIs dans un seul ZIP (layout jni/ Android)
+  # ───────────────────────────────────────────────────────────────────────────
+  package:
+    name: Package all ABIs
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download arm64-v8a
+        uses: actions/download-artifact@v4
+        with:
+          name: libangels-arm64-v8a
+          path: jni/arm64-v8a
+
+      - name: Download armeabi-v7a
+        uses: actions/download-artifact@v4
+        with:
+          name: libangels-armeabi-v7a
+          path: jni/armeabi-v7a
+
+      - name: Download x86_64
+        uses: actions/download-artifact@v4
+        with:
+          name: libangels-x86_64
+          path: jni/x86_64
+
+      - name: Verify & show sizes
+        run: |
+          find jni/ -name "*.so" | while read f; do
+            echo "$(du -sh "$f" | cut -f1)  $f  |  $(file "$f" | grep -o 'ELF.*')"
+          done
+
+      - name: Create release ZIP
+        run: |
+          zip -r libangels-all-abis.zip jni/
+          echo "ZIP : $(du -sh libangels-all-abis.zip | cut -f1)"
+
+      - name: Upload combined ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: libangels-all-abis
+          path: libangels-all-abis.zip
+          retention-days: 90
