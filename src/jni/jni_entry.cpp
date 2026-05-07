@@ -45,6 +45,7 @@ static jbyteArray vec_to_jbytes(JNIEnv* env,
                                  const std::vector<uint8_t>& v) {
     if (v.empty()) return nullptr;
     jbyteArray arr = env->NewByteArray(static_cast<jsize>(v.size()));
+    if (!arr) { LOGE("Failed to allocate jbyteArray"); return nullptr; }
     if (!arr) return nullptr;
     env->SetByteArrayRegion(arr, 0, static_cast<jsize>(v.size()),
                             reinterpret_cast<const jbyte*>(v.data()));
@@ -244,6 +245,7 @@ Java_com_angels_memory_NativeCore_scanXorKeys(JNIEnv* env, jclass,
         static_cast<int32_t>(known_value), 16);
 
     jintArray arr = env->NewIntArray(static_cast<jsize>(keys.size()));
+    if (!arr) { LOGE("Failed to allocate jintArray"); return nullptr; }
     if (!arr) return nullptr;
     std::vector<jint> tmp(keys.begin(), keys.end());
     env->SetIntArrayRegion(arr, 0, static_cast<jsize>(tmp.size()),
@@ -452,6 +454,7 @@ Java_com_angels_memory_NativeCore_scanString(JNIEnv* env, jclass,
                                    static_cast<bool>(case_sensitive));
 
     jlongArray arr = env->NewLongArray(static_cast<jsize>(results.size()));
+    if (!arr) { LOGE("Failed to allocate jlongArray"); return nullptr; }
     if (!arr) return nullptr;
     std::vector<jlong> tmp;
     tmp.reserve(results.size());

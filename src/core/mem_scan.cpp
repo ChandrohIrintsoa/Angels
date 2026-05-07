@@ -487,8 +487,12 @@ int write_all(pid_t pid, const std::vector<ScanResult>& results,
 {
     if (!value || vsz == 0 || pid <= 0) return 0;
     int n = 0;
+    auto start = std::chrono::high_resolution_clock::now();
     for (const auto& r : results)
         if (write_mem(pid, r.address, value, vsz)) ++n;
+    auto end = std::chrono::high_resolution_clock::now();
+    auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    LOGI("write_all: %d writes in %lld ms", n, dur);
     return n;
 }
 
@@ -497,11 +501,15 @@ int write_all_offset(pid_t pid, const std::vector<ScanResult>& results,
 {
     if (!value || vsz == 0 || pid <= 0) return 0;
     int n = 0;
+    auto start = std::chrono::high_resolution_clock::now();
     for (const auto& r : results) {
         uintptr_t target_addr = static_cast<uintptr_t>(
             static_cast<ptrdiff_t>(r.address) + addr_offset);
         if (write_mem(pid, target_addr, value, vsz)) ++n;
     }
+    auto end = std::chrono::high_resolution_clock::now();
+    auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    LOGI("write_all: %d writes in %lld ms", n, dur);
     return n;
 }
 
