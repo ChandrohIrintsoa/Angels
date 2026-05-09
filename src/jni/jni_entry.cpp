@@ -81,6 +81,10 @@ extern "C" int angels_get_scan_count(void) {
 }
 
 extern "C" {
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    __android_log_print(ANDROID_LOG_INFO, "Angels/JNI", "JNI_OnLoad: libangels.so loaded successfully");
+    return JNI_VERSION_1_6;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Maps

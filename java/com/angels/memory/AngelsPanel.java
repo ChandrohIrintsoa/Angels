@@ -1,4 +1,6 @@
 package com.angels.memory;
+import android.content.Context;
+import android.content.Intent;
 
 /**
  * AngelsPanel — Pont Java ↔ libangels.so pour l'état du panel de contrôle.
@@ -119,6 +121,11 @@ public final class AngelsPanel {
             case NativeCore.MODE_DECREASED_BY: return "-BY";
             default:                           return "?";
         }
+    }
+
+    public static void show(Context ctx) {
+        Intent intent = new Intent(ctx, AngelsOverlayService.class);
+        ctx.startService(intent);
     }
 
     private AngelsPanel() {}
